@@ -12,6 +12,7 @@ import com.bankingsystem.bank.dto.AccountResponse;
 import com.bankingsystem.bank.dto.CreateAccountRequest;
 import com.bankingsystem.bank.dto.DepositRequest;
 import com.bankingsystem.bank.dto.TransferRequest;
+import com.bankingsystem.bank.dto.TransferResponse;
 import com.bankingsystem.bank.dto.WithdrawRequest;
 import com.bankingsystem.bank.entity.Account;
 import com.bankingsystem.bank.entity.AccountStatus;
@@ -137,15 +138,15 @@ public class AccountService {
     }
 
     @Transactional 
-    public AccountResponse transfer(TransferRequest request) {
-        Account sourceAccount = accountRepository.findById(request.fromAccountId())
+    public TransferResponse transfer(TransferRequest request) {
+        Account sourceAccount = accountRepository.findByAccountNumber(request.fromAccountNumber())
             .orElseThrow(() -> new AccountNotFoundException(
-                "No source account found with ID: " + request.fromAccountId()
+                "No source account found with Acc/No: " + request.fromAccountNumber()
             ));
 
-        Account destinationAccount = accountRepository.findById(request.toAccountId())
+        Account destinationAccount = accountRepository.findByAccountNumber(request.toAccountNumber())
             .orElseThrow(() -> new AccountNotFoundException(
-                "No destination account found with ID: " + request.toAccountId()
+                "No destination account found with Acc/No: " + request.toAccountNumber()
             ));
         
         if (sourceAccount.getId().equals(destinationAccount.getId())) {
@@ -164,6 +165,11 @@ public class AccountService {
             destinationAccount.getBalance().add(request.amount())
         );
 
-        return toAccountResponse(sourceAccount);
+        return new TransferResponse(
+            request.fromAccountNumber(),
+            request.toAccountNumber(),
+            request.amount(),
+            sourceAccount.getBalance()
+        );
     }
 }

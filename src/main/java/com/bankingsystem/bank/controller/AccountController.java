@@ -7,6 +7,7 @@ import com.bankingsystem.bank.dto.AccountResponse;
 import com.bankingsystem.bank.dto.CreateAccountRequest;
 import com.bankingsystem.bank.dto.DepositRequest;
 import com.bankingsystem.bank.dto.TransferRequest;
+import com.bankingsystem.bank.dto.TransferResponse;
 import com.bankingsystem.bank.dto.WithdrawRequest;
 import com.bankingsystem.bank.service.AccountService;
 
@@ -71,10 +72,10 @@ public class AccountController {
     }
     
     @PostMapping("/transfer")
-    public ResponseEntity<AccountResponse> transfer(@Valid @RequestBody TransferRequest request) {
-        AccountResponse updatedAccount = accountService.transfer(request);
+    public ResponseEntity<TransferResponse> transfer(@Valid @RequestBody TransferRequest request) {
+        TransferResponse transferResponse = accountService.transfer(request);
 
-        return ResponseEntity.ok(updatedAccount);
+        return ResponseEntity.ok(transferResponse);
     }
     
     
