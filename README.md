@@ -44,11 +44,11 @@ This is a hands-on backend engineering project developed incrementally to learn 
 
 The versions above reflect the build configuration; they are not a claim that the application was built or tested during documentation review.
 
-Clone your repository and enter its directory. Replace both placeholders with your repository's actual values:
+Clone the repository and enter its directory:
 
 ```sh
-git clone <repository-url>
-cd <repository-directory>
+git clone https://github.com/MetaAJ/banking-system.git
+cd banking-system
 ```
 
 Run with the included Maven wrapper on Windows (PowerShell):
