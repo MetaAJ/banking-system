@@ -1,12 +1,15 @@
 package com.bankingsystem.bank.controller;
 
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bankingsystem.bank.dto.TransactionResponse;
+import com.bankingsystem.bank.entity.TransactionType;
 import com.bankingsystem.bank.service.TransactionService;
 
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,8 +26,12 @@ public class TransactionController {
     }
 
     @GetMapping("/account/{accountId}")
-    public ResponseEntity<List<TransactionResponse>> getTransactionsByAccountId(@PathVariable Long accountId) {
-        List<TransactionResponse> transactions = transactionService.getTransactionsByAccountId(accountId);
+    public ResponseEntity<Page<TransactionResponse>> getTransactionsByAccountId(
+                @PathVariable Long accountId,
+                @RequestParam(required = false) TransactionType transactionType,
+                Pageable pageable
+            ) {
+        Page<TransactionResponse> transactions = transactionService.getTransactionsByAccountId(accountId,transactionType,pageable);
 
         return ResponseEntity.ok(transactions);
     }

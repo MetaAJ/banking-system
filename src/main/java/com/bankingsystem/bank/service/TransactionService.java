@@ -3,10 +3,13 @@ package com.bankingsystem.bank.service;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.bankingsystem.bank.dto.TransactionResponse;
 import com.bankingsystem.bank.entity.Transaction;
+import com.bankingsystem.bank.entity.TransactionType;
 import com.bankingsystem.bank.repository.TransactionRepository;
 
 @Service 
@@ -33,19 +36,16 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
     }
 
-    public List<TransactionResponse> getTransactionsByAccountId(Long accountId) {
-        List<Transaction> transactions = transactionRepository.findByFromAccountIdOrToAccountIdOrderByCreatedAtDesc
-        (
-            accountId, accountId
-        );
+    public Page<TransactionResponse> getTransactionsByAccountId(Long accountId, TransactionType transactionType, Pageable pageable) {
 
-        List<TransactionResponse> responses = new ArrayList<>();
+        Page<Transaction> transactions;
 
-        for (Transaction transaction : transactions) {
-            responses.add(toTransactionResponse(transaction));
+        if (transactionType == null) {
+            transactions = transactionRepository.findByAccountId(accountId, pageable);
+        } else {
+            transactions = transactionRepository.findByAccountIdAndTransactionType(accountId, transactionType, pageable);
         }
 
-        return responses;
-        
+        return transactions.map(this::toTransactionResponse);
     }
 }
