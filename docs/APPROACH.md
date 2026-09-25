@@ -61,15 +61,15 @@ If another transaction has changed the row, the stale update can fail instead of
 
 Each financial transaction receives a reference such as `TXN7A91C42F10`, separate from its internal database ID. The application checks whether a reference already exists before saving it.
 
-A pre-save lookup alone does not guarantee uniqueness under concurrent writes. A database uniqueness constraint is the appropriate safeguard; the supplied project description does not establish whether that constraint is present for transaction references.
+Both transaction references and account numbers have `@Column(unique = true, nullable = false)` mappings. Generation uses the respective `TXN` or `ACC` prefix followed by ten uppercase hexadecimal characters from a UUID. A pre-save lookup checks for existing values, while the database constraint provides the uniqueness safeguard. Retrying a uniqueness conflict during concurrent inserts is not currently implemented.
 
 ## API and persistence separation
 
-Request and response DTOs keep JPA entities out of the public API contract. Repositories provide common database operations through Spring Data JPA, while services own business behavior and entity-to-DTO conversion.
+Account and transaction response DTOs separate those API contracts from persistence entities. Customer endpoints still return `Customer` directly, and customer POST and PUT accept the entity. Customer PATCH uses `UpdateCustomerRequest`. Repositories provide common database operations through Spring Data JPA, while services own business behavior and entity-to-DTO conversion.
 
 ## Testing approach
 
-The APIs are currently tested manually using Postman. The project description lists the following scenarios as tested; this documentation does not represent a new execution of those checks.
+The APIs are currently tested manually using Postman. The following scenarios were reported as manually tested. The application and tests were not executed during this documentation review.
 
 | Area | Manual scenarios |
 | --- | --- |
@@ -80,7 +80,17 @@ The APIs are currently tested manually using Postman. The project description li
 | Transfer | Successful transfer, insufficient funds, same source and destination, missing source, missing destination, transaction creation |
 | Transaction history | Retrieve account transactions, deposit/withdrawal/transfer history, newest-first ordering |
 
-Automated unit and integration tests are planned.
+An application-context smoke test (`BankApplicationTests.contextLoads`) exists. Automated business unit and integration tests are planned.
+
+## Next engineering priorities
+
+1. Enforce account-status rules before financial operations.
+2. Add nonblank validation to transfer account numbers and appropriate validation for optional customer PATCH fields.
+3. Introduce customer DTOs and consistent duplicate-email handling during updates. The explicit duplicate-email lookup currently applies to creation; updates rely on the database uniqueness constraint.
+4. Define accepted decimal places, database precision/scale, and any rounding policy for monetary values. `BigDecimal` alone does not define those rules.
+5. Add business tests for transfer rollback, concurrent balance updates, invalid amounts, and duplicate-email updates.
+
+Entity validation and request validation are distinct: the current PATCH endpoint has no `@Valid`, and `UpdateCustomerRequest` has no validation annotations. Persistence-level constraints may still reject invalid customer values, but they do not use the existing request-validation error path.
 
 ## Concepts practiced
 

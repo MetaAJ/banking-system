@@ -34,10 +34,10 @@ Customer 1 ─────────── * Account
 An account contains:
 
 - Internal database ID.
-- Automatically generated unique account number, for example `ACC8F4A21C9D`.
+- Automatically generated unique account number, for example `ACC8F4A21C9D0`.
 - Account type: `SAVINGS` or `CURRENT`.
 - Balance.
-- Account status: `ACTIVE`, `BLOCKED`, or `CLOSED`.
+- Account status: `ACTIVE`, `BLOCKED`, or `CLOSED`. Creation sets `ACTIVE`; deposits, withdrawals, and transfers currently do not check status.
 - Associated customer.
 - Optimistic locking version.
 
@@ -61,6 +61,8 @@ An account can participate as the source or destination of many transactions:
 | Transfer | Source account | Destination account |
 
 For deposits and withdrawals, the external source or destination is represented by the absent account reference, not by a separate account entity.
+
+The transaction entity has an internal ID, but `TransactionResponse` exposes the transaction reference instead of that ID. Both account numbers and transaction references have unique, non-null column mappings.
 
 ## Transfer request flow
 
@@ -89,7 +91,7 @@ The balance updates and transaction record belong to one database transaction. F
 - `TransferResponse`
 - `TransactionResponse`
 
-DTOs keep API contracts separate from JPA entities. Account responses use `AccountResponse`, and transaction history uses `TransactionResponse`.
+Account responses use `AccountResponse`, and transaction history uses `TransactionResponse`. Customer endpoints currently return the `Customer` entity; customer POST and PUT also accept that entity directly. Customer PATCH accepts `UpdateCustomerRequest`. Full customer DTO separation is planned.
 
 ## Exceptions
 
