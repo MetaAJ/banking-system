@@ -1,6 +1,7 @@
 package com.bankingsystem.bank.service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -17,12 +18,16 @@ import com.bankingsystem.bank.dto.WithdrawRequest;
 import com.bankingsystem.bank.entity.Account;
 import com.bankingsystem.bank.entity.AccountStatus;
 import com.bankingsystem.bank.entity.Customer;
+import com.bankingsystem.bank.entity.Transaction;
+import com.bankingsystem.bank.entity.TransactionStatus;
+import com.bankingsystem.bank.entity.TransactionType;
 import com.bankingsystem.bank.exception.AccountNotFoundException;
 import com.bankingsystem.bank.exception.CustomerNotFoundException;
 import com.bankingsystem.bank.exception.InsufficientFundsException;
 import com.bankingsystem.bank.exception.InvalidTransferException;
 import com.bankingsystem.bank.repository.AccountRepository;
 import com.bankingsystem.bank.repository.CustomerRepository;
+import com.bankingsystem.bank.repository.TransactionRepository;
 
 import jakarta.transaction.Transactional;
 
@@ -30,9 +35,18 @@ import jakarta.transaction.Transactional;
 public class AccountService {
     private final AccountRepository accountRepository;
     private final CustomerRepository customerRepository;
+    private final TransactionRepository transactionRepository;
 
     private String generateAccountNumber() {
             return "ACC" + UUID.randomUUID()
+                    .toString()
+                    .replace("-", "")
+                    .substring(0, 10)
+                    .toUpperCase();
+    }
+
+    private String generateTransactionReference() {
+            return "TXN" + UUID.randomUUID()
                     .toString()
                     .replace("-", "")
                     .substring(0, 10)
@@ -50,9 +64,14 @@ public class AccountService {
         );
     }
 
-    public AccountService(AccountRepository accountRepository, CustomerRepository customerRepository) {
+    public AccountService(
+        AccountRepository accountRepository, 
+        CustomerRepository customerRepository,
+        TransactionRepository transactionRepository
+    ) {
         this.accountRepository = accountRepository;
         this.customerRepository = customerRepository;
+        this.transactionRepository = transactionRepository;
     }
 
     public AccountResponse createAccount(CreateAccountRequest request) {
@@ -115,6 +134,23 @@ public class AccountService {
             existingAccount.getBalance().add(request.amount())
         );
 
+        String transactionReference;
+        do {
+            transactionReference = generateTransactionReference();
+        } while (transactionRepository.existsByTransactionReference(transactionReference));
+
+        Transaction transaction = new Transaction(
+                                            transactionReference,
+                                            TransactionType.DEPOSIT, 
+                                            request.amount(), 
+                                            null, 
+                                            existingAccount, 
+                                            TransactionStatus.SUCCESS,
+                                            LocalDateTime.now()
+                                        );
+
+        transactionRepository.save(transaction);
+
         return toAccountResponse(existingAccount);
     }
 
@@ -133,6 +169,23 @@ public class AccountService {
         existingAccount.setBalance(
             balance.subtract(request.amount())
         );
+
+        String transactionReference;
+        do {
+            transactionReference = generateTransactionReference();
+        } while (transactionRepository.existsByTransactionReference(transactionReference));
+
+        Transaction transaction = new Transaction(
+                                            transactionReference,
+                                            TransactionType.WITHDRAWAL, 
+                                            request.amount(), 
+                                            existingAccount, 
+                                            null, 
+                                            TransactionStatus.SUCCESS,
+                                            LocalDateTime.now()
+                                        );
+
+        transactionRepository.save(transaction);
 
         return toAccountResponse(existingAccount);
     }
@@ -164,6 +217,23 @@ public class AccountService {
         destinationAccount.setBalance(
             destinationAccount.getBalance().add(request.amount())
         );
+
+        String transactionReference;
+        do {
+            transactionReference = generateTransactionReference();
+        } while (transactionRepository.existsByTransactionReference(transactionReference));
+
+        Transaction transaction = new Transaction(
+                                            transactionReference,
+                                            TransactionType.TRANSFER, 
+                                            request.amount(), 
+                                            sourceAccount, 
+                                            destinationAccount, 
+                                            TransactionStatus.SUCCESS,
+                                            LocalDateTime.now()
+                                        );
+
+        transactionRepository.save(transaction);
 
         return new TransferResponse(
             request.fromAccountNumber(),
