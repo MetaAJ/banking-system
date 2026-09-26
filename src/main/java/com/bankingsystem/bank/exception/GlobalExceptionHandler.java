@@ -74,4 +74,13 @@ public class GlobalExceptionHandler {
                     .status(HttpStatus.BAD_REQUEST)
                     .body(ex.getMessage());
         }
+
+    //conflict because request can be valid but the operation conflicts with the current state of the resource
+    @ExceptionHandler (AccountOperationNotAllowedException.class)
+    public ResponseEntity<String> handleAccountOperationNotAllowed(
+        AccountOperationNotAllowedException ex) {
+            return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(ex.getMessage());
+        }
 }

@@ -22,6 +22,7 @@ import com.bankingsystem.bank.entity.Transaction;
 import com.bankingsystem.bank.entity.TransactionStatus;
 import com.bankingsystem.bank.entity.TransactionType;
 import com.bankingsystem.bank.exception.AccountNotFoundException;
+import com.bankingsystem.bank.exception.AccountOperationNotAllowedException;
 import com.bankingsystem.bank.exception.CustomerNotFoundException;
 import com.bankingsystem.bank.exception.InsufficientFundsException;
 import com.bankingsystem.bank.exception.InvalidTransferException;
@@ -37,6 +38,7 @@ public class AccountService {
     private final CustomerRepository customerRepository;
     private final TransactionRepository transactionRepository;
 
+
     private String generateAccountNumber() {
             return "ACC" + UUID.randomUUID()
                     .toString()
@@ -45,6 +47,7 @@ public class AccountService {
                     .toUpperCase();
     }
 
+
     private String generateTransactionReference() {
             return "TXN" + UUID.randomUUID()
                     .toString()
@@ -52,6 +55,7 @@ public class AccountService {
                     .substring(0, 10)
                     .toUpperCase();
     }
+
 
     private AccountResponse toAccountResponse(Account account) {
         return new AccountResponse(
@@ -64,6 +68,17 @@ public class AccountService {
         );
     }
 
+
+    private void checkAccountIsActive(Account account) {
+        if (account.getStatus() == AccountStatus.BLOCKED) {
+            throw new AccountOperationNotAllowedException("The account is blocked. Please contact your nearest branch.");
+        }
+        else if (account.getStatus() == AccountStatus.CLOSED) {
+            throw new AccountOperationNotAllowedException("This account has been closed.");
+        }
+    }
+
+
     public AccountService(
         AccountRepository accountRepository, 
         CustomerRepository customerRepository,
@@ -73,6 +88,7 @@ public class AccountService {
         this.customerRepository = customerRepository;
         this.transactionRepository = transactionRepository;
     }
+
 
     public AccountResponse createAccount(CreateAccountRequest request) {
         Optional<Customer> customer = customerRepository.findById(request.customerId());
@@ -102,6 +118,7 @@ public class AccountService {
         return toAccountResponse(savedAccount);
     }
 
+
     public List<AccountResponse> getAccountsByCustomerId(Long customerId) {
         List<Account> accounts = accountRepository.findByCustomerId(customerId);
 
@@ -113,6 +130,7 @@ public class AccountService {
         return responses;
     }
 
+
     public AccountResponse getAccountById(Long accountId) {
         Optional<Account> fetchedAccount = accountRepository.findById(accountId);
         if (fetchedAccount.isEmpty()) {
@@ -123,12 +141,15 @@ public class AccountService {
         return toAccountResponse(fetchedAccount.get());
     }
 
+
     @Transactional 
     public AccountResponse deposit(Long accountId, DepositRequest request) {
         Account existingAccount = accountRepository.findById(accountId)
             .orElseThrow(() -> new AccountNotFoundException(
                 "No account found with ID: " + accountId
             ));
+
+        checkAccountIsActive(existingAccount);
         
         existingAccount.setBalance(
             existingAccount.getBalance().add(request.amount())
@@ -154,6 +175,7 @@ public class AccountService {
         return toAccountResponse(existingAccount);
     }
 
+
     @Transactional 
     public AccountResponse withdraw(Long accountId, WithdrawRequest request) {
         Account existingAccount = accountRepository.findById(accountId)
@@ -161,6 +183,8 @@ public class AccountService {
                 "No account found with ID: " + accountId
             ));
         
+        checkAccountIsActive(existingAccount);
+
         BigDecimal balance = existingAccount.getBalance();
         if (balance.compareTo(request.amount()) < 0) {
             throw new InsufficientFundsException("Insufficient Funds");
@@ -190,6 +214,7 @@ public class AccountService {
         return toAccountResponse(existingAccount);
     }
 
+
     @Transactional 
     public TransferResponse transfer(TransferRequest request) {
         Account sourceAccount = accountRepository.findByAccountNumber(request.fromAccountNumber())
@@ -205,6 +230,9 @@ public class AccountService {
         if (sourceAccount.getId().equals(destinationAccount.getId())) {
             throw new InvalidTransferException("Source and destination accounts must be different");
         }
+
+        checkAccountIsActive(sourceAccount);
+        checkAccountIsActive(destinationAccount);
         
         BigDecimal balance = sourceAccount.getBalance();
         if (balance.compareTo(request.amount()) < 0) {
