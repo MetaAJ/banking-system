@@ -4,6 +4,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.bankingsystem.bank.dto.AccountResponse;
+import com.bankingsystem.bank.dto.AdminCreateAccountRequest;
 import com.bankingsystem.bank.dto.CreateAccountRequest;
 import com.bankingsystem.bank.dto.DepositRequest;
 import com.bankingsystem.bank.dto.TransferRequest;
@@ -22,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
-
 
 
 @RestController 
@@ -50,23 +50,23 @@ public class AccountController {
         return ResponseEntity.ok(accounts);
     }
     
-    @GetMapping("/{id}")
-    public ResponseEntity<AccountResponse> getAccountById(@PathVariable Long id) {
-        AccountResponse account = accountService.getAccountById(id);
+    @GetMapping("/{accountNumber}")
+    public ResponseEntity<AccountResponse> getAccountByAccountNumber(@PathVariable String accountNumber) {
+        AccountResponse account = accountService.getAccountByAccountNumber(accountNumber);
 
         return ResponseEntity.ok(account);
     }
 
-    @PostMapping("/{id}/deposit")
-    public ResponseEntity<AccountResponse> deposit(@PathVariable Long id, @Valid @RequestBody DepositRequest request) {
-        AccountResponse updatedAccount = accountService.deposit(id, request);
+    @PostMapping("/{accountNumber}/deposit")
+    public ResponseEntity<AccountResponse> deposit(@PathVariable String accountNumber, @Valid @RequestBody DepositRequest request) {
+        AccountResponse updatedAccount = accountService.deposit(accountNumber, request);
 
         return ResponseEntity.ok(updatedAccount);
     }
     
-    @PostMapping("/{id}/withdraw")
-    public ResponseEntity<AccountResponse> withdraw(@PathVariable Long id, @Valid @RequestBody WithdrawRequest request) {
-        AccountResponse updatedAccount = accountService.withdraw(id, request);
+    @PostMapping("/{accountNumber}/withdraw")
+    public ResponseEntity<AccountResponse> withdraw(@PathVariable String accountNumber, @Valid @RequestBody WithdrawRequest request) {
+        AccountResponse updatedAccount = accountService.withdraw(accountNumber, request);
 
         return ResponseEntity.ok(updatedAccount);
     }
@@ -77,6 +77,5 @@ public class AccountController {
 
         return ResponseEntity.ok(transferResponse);
     }
-    
     
 }

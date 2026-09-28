@@ -83,4 +83,12 @@ public class GlobalExceptionHandler {
                     .status(HttpStatus.CONFLICT)
                     .body(ex.getMessage());
         }
+
+    @ExceptionHandler (CustomerAccessDeniedException.class)
+    public ResponseEntity<String> handleCustomerAccessDenied(
+        CustomerAccessDeniedException ex) {
+            return ResponseEntity
+                    .status(HttpStatus.FORBIDDEN)
+                    .body(ex.getMessage());
+        }
 }

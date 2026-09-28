@@ -7,9 +7,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import com.bankingsystem.bank.dto.AccountResponse;
+import com.bankingsystem.bank.dto.AdminCreateAccountRequest;
 import com.bankingsystem.bank.dto.CreateAccountRequest;
 import com.bankingsystem.bank.dto.DepositRequest;
 import com.bankingsystem.bank.dto.TransferRequest;
@@ -17,18 +19,22 @@ import com.bankingsystem.bank.dto.TransferResponse;
 import com.bankingsystem.bank.dto.WithdrawRequest;
 import com.bankingsystem.bank.entity.Account;
 import com.bankingsystem.bank.entity.AccountStatus;
+import com.bankingsystem.bank.entity.AccountType;
 import com.bankingsystem.bank.entity.Customer;
 import com.bankingsystem.bank.entity.Transaction;
 import com.bankingsystem.bank.entity.TransactionStatus;
 import com.bankingsystem.bank.entity.TransactionType;
+import com.bankingsystem.bank.entity.UserAccount;
 import com.bankingsystem.bank.exception.AccountNotFoundException;
 import com.bankingsystem.bank.exception.AccountOperationNotAllowedException;
+import com.bankingsystem.bank.exception.CustomerAccessDeniedException;
 import com.bankingsystem.bank.exception.CustomerNotFoundException;
 import com.bankingsystem.bank.exception.InsufficientFundsException;
 import com.bankingsystem.bank.exception.InvalidTransferException;
 import com.bankingsystem.bank.repository.AccountRepository;
 import com.bankingsystem.bank.repository.CustomerRepository;
 import com.bankingsystem.bank.repository.TransactionRepository;
+import com.bankingsystem.bank.repository.UserAccountRepository;
 
 import jakarta.transaction.Transactional;
 
@@ -37,6 +43,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final CustomerRepository customerRepository;
     private final TransactionRepository transactionRepository;
+    private final UserAccountRepository userAccountRepository;
 
 
     private String generateAccountNumber() {
@@ -69,41 +76,12 @@ public class AccountService {
     }
 
 
-    private void checkAccountIsActive(Account account) {
-        if (account.getStatus() == AccountStatus.BLOCKED) {
-            throw new AccountOperationNotAllowedException("The account is blocked. Please contact your nearest branch.");
-        }
-        else if (account.getStatus() == AccountStatus.CLOSED) {
-            throw new AccountOperationNotAllowedException("This account has been closed.");
-        }
-    }
-
-
-    public AccountService(
-        AccountRepository accountRepository, 
-        CustomerRepository customerRepository,
-        TransactionRepository transactionRepository
-    ) {
-        this.accountRepository = accountRepository;
-        this.customerRepository = customerRepository;
-        this.transactionRepository = transactionRepository;
-    }
-
-
-    public AccountResponse createAccount(CreateAccountRequest request) {
-        Optional<Customer> customer = customerRepository.findById(request.customerId());
-        if (customer.isEmpty()) {
-            throw new CustomerNotFoundException(
-                "Customer with ID: " + request.customerId() + " not found!"
-            );
-        }
-        
+    private AccountResponse createAccountForCustomer(Customer customer, AccountType accountType) {
         Account account = new Account();
 
-        Customer existingCustomer = customer.get();
-        account.setCustomer(existingCustomer);
+        account.setCustomer(customer);
         account.setBalance(BigDecimal.ZERO);
-        account.setAccountType(request.accountType());
+        account.setAccountType(accountType);
         account.setStatus(AccountStatus.ACTIVE);
 
         String accountNumber;
@@ -119,8 +97,110 @@ public class AccountService {
     }
 
 
+    private void checkAccountIsActive(Account account) {
+        if (account.getStatus() == AccountStatus.BLOCKED) {
+            throw new AccountOperationNotAllowedException("The account is blocked. Please contact your nearest branch.");
+        }
+        else if (account.getStatus() == AccountStatus.CLOSED) {
+            throw new AccountOperationNotAllowedException("This account has been closed.");
+        }
+    }
+
+
+    private Account verifyAccount(String accountNumber) {
+        String email = SecurityContextHolder
+            .getContext()
+            .getAuthentication()
+            .getName();
+        
+        UserAccount user = userAccountRepository
+                                .findByEmail(email)
+                                .orElseThrow(() -> new CustomerNotFoundException(
+                                    "No user found with email: " + email
+                                ));
+        
+        Long authenticatedCustomerId = user.getCustomer().getId();                     
+
+        Account account = accountRepository
+            .findByAccountNumber(accountNumber)
+            .orElseThrow(() -> new AccountNotFoundException(
+                "No account found with Acc/No: " + accountNumber
+            ));
+
+        if(!account.getCustomer().getId().equals(authenticatedCustomerId)) {
+            throw new CustomerAccessDeniedException(
+                "You are not authorized to access this account"
+            );
+        }
+
+        return account;
+    }
+
+
+    public AccountService(
+        AccountRepository accountRepository, 
+        CustomerRepository customerRepository,
+        TransactionRepository transactionRepository,
+        UserAccountRepository userAccountRepository
+    ) {
+        this.accountRepository = accountRepository;
+        this.customerRepository = customerRepository;
+        this.transactionRepository = transactionRepository;
+        this.userAccountRepository = userAccountRepository;
+    }
+
+
+    public AccountResponse adminCreateAccount(AdminCreateAccountRequest request) {
+        Optional<Customer> customer = customerRepository.findById(request.customerId());
+        if (customer.isEmpty()) {
+            throw new CustomerNotFoundException(
+                "Customer with ID: " + request.customerId() + " not found!"
+            );
+        }
+        
+        return createAccountForCustomer(customer.get(), request.accountType());
+        
+    }
+
+
+    public AccountResponse createAccount(CreateAccountRequest request) {
+        String email = SecurityContextHolder
+            .getContext()
+            .getAuthentication()
+            .getName();
+        
+        UserAccount user = userAccountRepository
+                                .findByEmail(email)
+                                .orElseThrow(() -> new CustomerNotFoundException(
+                                    "No user found with email: " + email
+                                ));                     
+        
+        return createAccountForCustomer(user.getCustomer(), request.accountType());
+    }
+
+
     public List<AccountResponse> getAccountsByCustomerId(Long customerId) {
-        List<Account> accounts = accountRepository.findByCustomerId(customerId);
+        String email = SecurityContextHolder
+            .getContext()
+            .getAuthentication()
+            .getName();
+        
+        UserAccount user = userAccountRepository
+                                .findByEmail(email)
+                                .orElseThrow(() -> new CustomerNotFoundException(
+                                    "No user found with email: " + email
+                                ));
+
+        
+        Long authenticatedCustomerId = user.getCustomer().getId();                        
+
+        if (!authenticatedCustomerId.equals(customerId)) {
+            throw new CustomerAccessDeniedException(
+                "You are not authorized to perform this action"
+            );
+        }
+
+        List<Account> accounts = accountRepository.findByCustomerId(authenticatedCustomerId);
 
         List<AccountResponse> responses = new ArrayList<>();
         for (Account account : accounts) {
@@ -131,28 +211,19 @@ public class AccountService {
     }
 
 
-    public AccountResponse getAccountById(Long accountId) {
-        Optional<Account> fetchedAccount = accountRepository.findById(accountId);
-        if (fetchedAccount.isEmpty()) {
-            throw new AccountNotFoundException(
-                "No account found with ID: " + accountId
-            );
-        }
-        return toAccountResponse(fetchedAccount.get());
+    public AccountResponse getAccountByAccountNumber(String accountNumber) {
+        Account account = verifyAccount(accountNumber);
+        return toAccountResponse(account);
     }
 
 
     @Transactional 
-    public AccountResponse deposit(Long accountId, DepositRequest request) {
-        Account existingAccount = accountRepository.findById(accountId)
-            .orElseThrow(() -> new AccountNotFoundException(
-                "No account found with ID: " + accountId
-            ));
-
-        checkAccountIsActive(existingAccount);
+    public AccountResponse deposit(String accountNumber, DepositRequest request) {
+        Account account = verifyAccount(accountNumber);
+        checkAccountIsActive(account);
         
-        existingAccount.setBalance(
-            existingAccount.getBalance().add(request.amount())
+        account.setBalance(
+            account.getBalance().add(request.amount())
         );
 
         String transactionReference;
@@ -165,32 +236,28 @@ public class AccountService {
                                             TransactionType.DEPOSIT, 
                                             request.amount(), 
                                             null, 
-                                            existingAccount, 
+                                            account, 
                                             TransactionStatus.SUCCESS,
                                             LocalDateTime.now()
                                         );
 
         transactionRepository.save(transaction);
 
-        return toAccountResponse(existingAccount);
+        return toAccountResponse(account);
     }
 
 
     @Transactional 
-    public AccountResponse withdraw(Long accountId, WithdrawRequest request) {
-        Account existingAccount = accountRepository.findById(accountId)
-            .orElseThrow(() -> new AccountNotFoundException(
-                "No account found with ID: " + accountId
-            ));
-        
-        checkAccountIsActive(existingAccount);
+    public AccountResponse withdraw(String accountNumber, WithdrawRequest request) {
+        Account account = verifyAccount(accountNumber);
+        checkAccountIsActive(account);
 
-        BigDecimal balance = existingAccount.getBalance();
+        BigDecimal balance = account.getBalance();
         if (balance.compareTo(request.amount()) < 0) {
             throw new InsufficientFundsException("Insufficient Funds");
         }
 
-        existingAccount.setBalance(
+        account.setBalance(
             balance.subtract(request.amount())
         );
 
@@ -203,7 +270,7 @@ public class AccountService {
                                             transactionReference,
                                             TransactionType.WITHDRAWAL, 
                                             request.amount(), 
-                                            existingAccount, 
+                                            account, 
                                             null, 
                                             TransactionStatus.SUCCESS,
                                             LocalDateTime.now()
@@ -211,16 +278,13 @@ public class AccountService {
 
         transactionRepository.save(transaction);
 
-        return toAccountResponse(existingAccount);
+        return toAccountResponse(account);
     }
 
 
     @Transactional 
     public TransferResponse transfer(TransferRequest request) {
-        Account sourceAccount = accountRepository.findByAccountNumber(request.fromAccountNumber())
-            .orElseThrow(() -> new AccountNotFoundException(
-                "No source account found with Acc/No: " + request.fromAccountNumber()
-            ));
+        Account sourceAccount = verifyAccount(request.fromAccountNumber());
 
         Account destinationAccount = accountRepository.findByAccountNumber(request.toAccountNumber())
             .orElseThrow(() -> new AccountNotFoundException(

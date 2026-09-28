@@ -4,6 +4,7 @@ import com.bankingsystem.bank.entity.AccountType;
 
 import jakarta.validation.constraints.NotNull;
 
-public record CreateAccountRequest(
+public record AdminCreateAccountRequest(
+    @NotNull  Long customerId,
     @NotNull AccountType accountType
 ) {}
