@@ -24,7 +24,7 @@ public class JwtService {
     }
 
     public String generateToken(Authentication authentication) {
-        String email = authentication.getName();
+        String userId = authentication.getName();
         
         String role = authentication.getAuthorities()
             .stream()
@@ -33,7 +33,7 @@ public class JwtService {
             .orElseThrow();
         
         JwtClaimsSet claims = JwtClaimsSet.builder()
-            .subject(email)
+            .subject(userId)
             .claim("role", role)
             .issuedAt(Instant.now())
             .expiresAt(Instant.now().plusMillis(jwtExpiration))

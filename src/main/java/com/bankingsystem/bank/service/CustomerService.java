@@ -12,13 +12,51 @@ import com.bankingsystem.bank.exception.CustomerNotFoundException;
 import com.bankingsystem.bank.repository.CustomerRepository;
 import com.bankingsystem.bank.repository.UserAccountRepository;
 
+import jakarta.transaction.Transactional;
+
 import java.util.List;
-import java.util.Optional;
 
 @Service 
 public class CustomerService {
     private final CustomerRepository customerRepository;
     private final UserAccountRepository userAccountRepository;
+
+    private UserAccount getAuthenticatedUser() {
+        String userId = SecurityContextHolder
+            .getContext()
+            .getAuthentication()
+            .getName();
+
+        Long authenticatedUserId = Long.valueOf(userId);
+
+        return userAccountRepository
+            .findById(authenticatedUserId)
+            .orElseThrow(() -> new CustomerNotFoundException(
+                "No user found with ID: " + authenticatedUserId
+            ));
+    }
+
+
+    private void checkEmailUniqueness(String email) {
+        if (customerRepository.findByEmail(email).isPresent()) {
+            throw new CustomerAlreadyExistsException(
+                "Customer with email: " + email + " already exists"
+            );
+        }
+    }
+
+
+    private void checkEmailUniqueness(String email, Long currentCustomerId) {
+        customerRepository.findByEmail(email)
+            .ifPresent(existingCustomer -> {
+                if (!existingCustomer.getId().equals(currentCustomerId)) {
+                    throw new CustomerAlreadyExistsException(
+                        "Customer with email: " + email + " already exists"
+                    );
+                }
+            }
+        );
+    }
 
 
     public CustomerService(
@@ -31,11 +69,7 @@ public class CustomerService {
 
 
     public Customer createCustomer(Customer customer) {
-        if (customerRepository.findByEmail(customer.getEmail()).isPresent()) {
-            throw new CustomerAlreadyExistsException(
-                "Customer with email: " + customer.getEmail() + " already exists"
-            );
-        }
+        checkEmailUniqueness(customer.getEmail());
         return customerRepository.save(customer);
     }
 
@@ -46,17 +80,7 @@ public class CustomerService {
 
 
     public Customer getCustomerById(Long id) {
-        String email = SecurityContextHolder
-            .getContext()
-            .getAuthentication()
-            .getName();
-        
-        UserAccount user = userAccountRepository
-                                .findByEmail(email)
-                                .orElseThrow(() -> new CustomerNotFoundException(
-                                    "No user found with email: " + email
-                                ));
-        
+        UserAccount user = getAuthenticatedUser();
         Long authenticatedCustomerId = user.getCustomer().getId();                        
 
         if (!authenticatedCustomerId.equals(id)) {
@@ -64,58 +88,50 @@ public class CustomerService {
                 "You are not authorized to perform this action"
             );
         }
-        /*Optional<Customer> foundCustomer = customerRepository.findById(id);
-        if (foundCustomer.isEmpty()) {
-            throw new CustomerNotFoundException(
-                "No customer found with ID: " + id
-            );
-        }
-        */
 
         return user.getCustomer();
     }
 
 
+    @Transactional 
     public Customer updateCustomerInfo(Long id, Customer newCustomer) {
-        Optional<Customer> customer = customerRepository.findById(id);
-        if (customer.isPresent()) {
-            Customer existingCustomer = customer.get();
+        UserAccount user = getAuthenticatedUser();
+        Customer customer = getCustomerById(id);
 
-            existingCustomer.setEmail(newCustomer.getEmail());
-            existingCustomer.setName(newCustomer.getName());
-            existingCustomer.setPhone(newCustomer.getPhone());
+        checkEmailUniqueness(newCustomer.getEmail(),id);
 
-            customerRepository.save(existingCustomer);
+        customer.setEmail(newCustomer.getEmail());
+        user.setEmail(newCustomer.getEmail());
+        customer.setName(newCustomer.getName());
+        customer.setPhone(newCustomer.getPhone());
 
-            return existingCustomer;
-        }
-        throw new CustomerNotFoundException(
-            "No customer found with ID: " + id
-        );
+        userAccountRepository.save(user);
+        customerRepository.save(customer);
+
+        return customer;
     }
 
 
+    @Transactional 
     public Customer patchCustomer(Long id, UpdateCustomerRequest request) {
-        Optional<Customer> customer = customerRepository.findById(id);
-        if (customer.isPresent()) {
-            Customer existingCustomer = customer.get();
-            if (request.email() != null) {
-                existingCustomer.setEmail(request.email());
-            }
-            if (request.name() != null) {
-                existingCustomer.setName(request.name());
-            }
-            if (request.phone() != null) {
-                existingCustomer.setPhone(request.phone());
-            }
-
-            customerRepository.save(existingCustomer);
-
-            return existingCustomer;
+        Customer customer = getCustomerById(id);
+        if (request.email() != null) {
+            UserAccount user = getAuthenticatedUser();
+            checkEmailUniqueness(request.email(),id);
+            customer.setEmail(request.email());
+            user.setEmail(request.email());
+            userAccountRepository.save(user);
         }
-        throw new CustomerNotFoundException(
-            "No customer found with ID: " + id
-        );
+        if (request.name() != null) {
+            customer.setName(request.name());
+        }
+        if (request.phone() != null) {
+            customer.setPhone(request.phone());
+        }
+
+        customerRepository.save(customer);
+
+        return customer;
     }
 
     

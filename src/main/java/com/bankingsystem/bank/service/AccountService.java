@@ -4,7 +4,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -107,19 +106,25 @@ public class AccountService {
     }
 
 
-    private Account verifyAccount(String accountNumber) {
-        String email = SecurityContextHolder
+    private UserAccount getAuthenticatedUser() {
+        String userId = SecurityContextHolder
             .getContext()
             .getAuthentication()
             .getName();
-        
-        UserAccount user = userAccountRepository
-                                .findByEmail(email)
-                                .orElseThrow(() -> new CustomerNotFoundException(
-                                    "No user found with email: " + email
-                                ));
-        
-        Long authenticatedCustomerId = user.getCustomer().getId();                     
+
+        Long authenticatedUserId = Long.valueOf(userId);
+
+        return userAccountRepository
+            .findById(authenticatedUserId)
+            .orElseThrow(() -> new CustomerNotFoundException(
+                "No user found with ID: " + authenticatedUserId
+            ));
+    }
+
+
+    private Account verifyAccount(String accountNumber) {
+        UserAccount user = getAuthenticatedUser();
+        Long authenticatedCustomerId = user.getCustomer().getId();                 
 
         Account account = accountRepository
             .findByAccountNumber(accountNumber)
@@ -151,48 +156,25 @@ public class AccountService {
 
 
     public AccountResponse adminCreateAccount(AdminCreateAccountRequest request) {
-        Optional<Customer> customer = customerRepository.findById(request.customerId());
-        if (customer.isEmpty()) {
-            throw new CustomerNotFoundException(
+        Customer customer = customerRepository.findById(request.customerId())
+            .orElseThrow(() -> new CustomerNotFoundException(
                 "Customer with ID: " + request.customerId() + " not found!"
-            );
-        }
+            ));
         
-        return createAccountForCustomer(customer.get(), request.accountType());
+        return createAccountForCustomer(customer, request.accountType());
         
     }
 
 
     public AccountResponse createAccount(CreateAccountRequest request) {
-        String email = SecurityContextHolder
-            .getContext()
-            .getAuthentication()
-            .getName();
-        
-        UserAccount user = userAccountRepository
-                                .findByEmail(email)
-                                .orElseThrow(() -> new CustomerNotFoundException(
-                                    "No user found with email: " + email
-                                ));                     
-        
+        UserAccount user = getAuthenticatedUser();
         return createAccountForCustomer(user.getCustomer(), request.accountType());
     }
 
 
     public List<AccountResponse> getAccountsByCustomerId(Long customerId) {
-        String email = SecurityContextHolder
-            .getContext()
-            .getAuthentication()
-            .getName();
-        
-        UserAccount user = userAccountRepository
-                                .findByEmail(email)
-                                .orElseThrow(() -> new CustomerNotFoundException(
-                                    "No user found with email: " + email
-                                ));
-
-        
-        Long authenticatedCustomerId = user.getCustomer().getId();                        
+        UserAccount user = getAuthenticatedUser();
+        Long authenticatedCustomerId = user.getCustomer().getId();
 
         if (!authenticatedCustomerId.equals(customerId)) {
             throw new CustomerAccessDeniedException(

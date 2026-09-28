@@ -7,7 +7,6 @@ import com.bankingsystem.bank.service.CustomerService;
 import jakarta.validation.Valid;
 
 import org.springframework.web.bind.annotation.*;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.util.List;
@@ -24,6 +23,9 @@ public class CustomerController {
         this.customerService = customerService;
     }
 
+    //Currently removed from customer facing endpoints 
+    //as this action is performed when a User is created/signed up at the bank.
+    /* 
     @PostMapping
     public ResponseEntity<Customer> createCustomer(@Valid @RequestBody Customer customer) {
         Customer createdCustomer = customerService.createCustomer(customer);
@@ -32,6 +34,7 @@ public class CustomerController {
                 .status(HttpStatus.CREATED)
                 .body(createdCustomer);
     }
+    */
 
     @GetMapping
     public ResponseEntity<List<Customer>> getCustomers() {
@@ -57,10 +60,13 @@ public class CustomerController {
         return ResponseEntity.ok(updatedCustomer);
     }
 
+    //Currently removed from customer facing endpoints as this is an ADMIN level action.
+    /*
     @DeleteMapping ("/{id}")
     public ResponseEntity<Void> deleteCustomerInfo(@PathVariable Long id) {
         customerService.deleteCustomerInfo(id);
         return ResponseEntity.noContent().build();
     }
+    */
     
 }
