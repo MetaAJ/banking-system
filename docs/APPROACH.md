@@ -2,100 +2,74 @@
 
 ## Project goal
 
-Build the banking API incrementally, learning the Java and Spring concepts behind each feature. The longer-term goal is to evolve the application into a more production-oriented backend with security, durable persistence, automated tests, and stronger operational support.
+Develop a banking backend incrementally while learning Java, Spring, persistence, validation, concurrency, and security. The current implementation now includes identity-aware account operations and paginated history alongside core financial operations.
 
-## Money handling
+## Money and consistency
 
-Financial amounts use `BigDecimal` instead of `double` or `float` to avoid binary floating-point precision issues. Conceptually, Java's `BigDecimal` plays a similar role to Python's `Decimal`.
+Amounts use `BigDecimal` to avoid binary floating-point representation errors. Request constraints require amounts of at least `0.01`; account balances have a nonnegative entity constraint. Accepted decimal places, explicit database precision/scale, currency, and rounding policy remain undefined.
 
-## Request validation
+Deposits, withdrawals, and transfers use `@Transactional`. Balance changes and successful transaction recording form one database unit of work, with rollback governed by the transaction rules. A financial `Transaction` entity is distinct from the database transaction that groups writes.
 
-The application uses Jakarta Bean Validation annotations such as `@NotNull`, `@NotBlank`, `@Email`, `@Size`, `@Pattern`, and `@DecimalMin`.
+Accounts use `@Version` to detect stale writes. Conceptually, updates include the previously read version in the predicate. A conflicting update can fail instead of overwriting a newer balance; supported locking failures map to HTTP 409. Automatic retries and idempotency keys are not implemented.
 
-For example:
+Generated account numbers and transaction references are checked for existing values before saving and also have unique column mappings. The database constraint is the final uniqueness safeguard; automatic retry of concurrent uniqueness conflicts is not implemented.
 
-```java
-public record DepositRequest(
-    @NotNull
-    @DecimalMin(value = "0.01")
-    BigDecimal amount
-) {}
-```
+## Identity and access decisions
 
-Request validation handles input constraints, while services implement business rules such as sufficient funds and different source and destination accounts. Errors are handled centrally through `@RestControllerAdvice`.
+Signup creates customer and login records atomically. BCrypt stores password hashes. Login uses Spring Security's authentication provider, and JWTs carry the authenticated email and role.
 
-## Atomic balance changes
+Customer account creation derives ownership from the authenticated user. A separate admin route allows account creation for a specified customer. Account reads and financial operations compare the source/target account owner to the caller where applicable. Transfers require ownership of the source but allow a destination owned by another customer.
 
-Deposits, withdrawals, and transfers use `@Transactional` so their database changes can commit together or roll back under the configured rollback rules.
+Financial operations now reject blocked and closed accounts. A transfer checks both accounts. Status-change endpoints are not yet implemented.
 
-For a transfer:
+Authorization remains incomplete: customer PUT/PATCH/DELETE and transaction-history retrieval require authentication but do not verify ownership. Direct customer creation is also available to any authenticated user. These rules should be completed before describing the API as enforcing ownership throughout.
 
-```text
-Debit source + Credit destination + Create transaction record
-                              ↓
-                         Single commit
-```
+## API boundaries and validation
 
-The application-level `Transaction` entity records a financial operation. It is distinct from the database transaction that makes the related writes atomic.
+Account and transaction responses use DTOs. Customer POST/PUT and responses still expose the customer entity. Request Bean Validation covers authentication DTOs, account creation, financial amounts, and customer POST/PUT fields.
 
-## Optimistic locking
+Transfer account-number strings lack nonblank constraints. Customer PATCH has neither request constraints nor `@Valid`; non-null values are applied directly. Persistence validation may reject some values, but it does not use the same request-validation error path.
 
-Accounts carry a JPA version field:
+Explicit duplicate-email checks exist for signup and direct customer creation. Customer updates rely on database constraints instead, without a dedicated constraint-error handler. Updating `Customer.email` does not synchronize `UserAccount.email`, so profile and login email can diverge.
 
-```java
-@Version
-private Long version;
-```
+## Transaction history
 
-Conceptually, Hibernate updates an account with a version check:
+Repository JPQL queries select transactions by source or destination account ID, optionally constrain transaction type, and order by descending creation time. Spring Data pagination is propagated to the response with `Page.map`.
 
-```sql
-UPDATE accounts
-SET balance = ?, version = ?
-WHERE id = ? AND version = ?;
-```
+This avoids loading all matching records into a response list. The endpoint currently uses internal account IDs, unlike account operations that use generated account numbers. It does not check account existence or caller ownership separately.
 
-If another transaction has changed the row, the stale update can fail instead of silently overwriting the newer balance. The API maps optimistic locking failures to **409 Conflict**. Advanced concurrency handling remains on the roadmap.
+## Test status
 
-## Transaction references
+| Test source | Intended coverage | Current status |
+| --- | --- | --- |
+| `BankApplicationTests` | Spring application context loads | Present; not executed during documentation review |
+| `deposit_shouldIncreaseBalance` | Deposit updates balance and records transaction | Uses obsolete numeric-ID service call |
+| `withdraw_shouldDecreaseBalance` | Withdrawal updates balance and records transaction | Uses obsolete numeric-ID service call |
+| `withdraw_shouldThrowException_whenInsufficientFunds` | Withdrawal rejects insufficient balance | Uses obsolete numeric-ID service call |
+| `transfer_shouldUpdateBalance` | Transfer updates both balances and records transaction | Needs authenticated-user setup |
+| `transfer_shouldThrowException_whenSameAccount` | Same-account transfer rejection | Needs authenticated-user setup |
+| `transfer_shouldThrowException_whenInsufficientFunds` | Transfer rejects insufficient balance | Needs authenticated-user setup |
 
-Each financial transaction receives a reference such as `TXN7A91C42F10`, separate from its internal database ID. The application checks whether a reference already exists before saving it.
+The numeric-ID calls are incompatible with the current string account-number signatures. The service tests also omit the `UserAccountRepository` mock and security context now used by account verification. Test fixtures should include valid owners, account numbers, and statuses. This source review does not claim successful test execution.
 
-Both transaction references and account numbers have `@Column(unique = true, nullable = false)` mappings. Generation uses the respective `TXN` or `ACC` prefix followed by ten uppercase hexadecimal characters from a UUID. A pre-save lookup checks for existing values, while the database constraint provides the uniqueness safeguard. Retrying a uniqueness conflict during concurrent inserts is not currently implemented.
+Recommended next coverage includes signup/login, role restrictions, cross-customer access rejection, blocked/closed accounts, transaction pagination/filtering, atomic rollback, optimistic locking, and duplicate-email updates. Mockito tests alone do not demonstrate real database rollback or concurrency behavior; add integration tests for those guarantees.
 
-## API and persistence separation
+## Next priorities
 
-Account and transaction response DTOs separate those API contracts from persistence entities. Customer endpoints still return `Customer` directly, and customer POST and PUT accept the entity. Customer PATCH uses `UpdateCustomerRequest`. Repositories provide common database operations through Spring Data JPA, while services own business behavior and entity-to-DTO conversion.
+1. Complete ownership enforcement for customer mutation and history routes; decide which customer-management actions are admin-only.
+2. Align and run the existing tests, then add security and database integration coverage.
+3. Add customer DTOs, PATCH validation, transfer account-number constraints, and consistent error responses.
+4. Define profile/login email synchronization and linked-record deletion behavior.
+5. Define monetary precision, currency, and rounding rules; introduce idempotency for financial writes.
+6. Externalize the JWT signing secret, explicitly define session policy, and design token refresh/revocation and admin provisioning.
+7. Add PostgreSQL, migrations, OpenAPI, Docker, and production configuration.
 
-## Testing approach
-
-The APIs are currently tested manually using Postman. The following scenarios were reported as manually tested. The application and tests were not executed during this documentation review.
-
-| Area | Manual scenarios |
-| --- | --- |
-| Customer | Create, duplicate email, invalid data, retrieve, update, delete |
-| Account | Create, retrieve one account, retrieve a customer's accounts |
-| Deposit | Successful deposit, invalid amount, transaction creation |
-| Withdrawal | Successful withdrawal, insufficient funds, invalid amount, transaction creation |
-| Transfer | Successful transfer, insufficient funds, same source and destination, missing source, missing destination, transaction creation |
-| Transaction history | Retrieve account transactions, deposit/withdrawal/transfer history, newest-first ordering |
-
-An application-context smoke test (`BankApplicationTests.contextLoads`) exists. Automated business unit and integration tests are planned.
-
-## Next engineering priorities
-
-1. Enforce account-status rules before financial operations.
-2. Add nonblank validation to transfer account numbers and appropriate validation for optional customer PATCH fields.
-3. Introduce customer DTOs and consistent duplicate-email handling during updates. The explicit duplicate-email lookup currently applies to creation; updates rely on the database uniqueness constraint.
-4. Define accepted decimal places, database precision/scale, and any rounding policy for monetary values. `BigDecimal` alone does not define those rules.
-5. Add business tests for transfer rollback, concurrent balance updates, invalid amounts, and duplicate-email updates.
-
-Entity validation and request validation are distinct: the current PATCH endpoint has no `@Valid`, and `UpdateCustomerRequest` has no validation annotations. Persistence-level constraints may still reject invalid customer values, but they do not use the existing request-validation error path.
+The source currently defines `jwt.secret` in application properties. Use an external configuration value for deployments rather than publishing or reusing that value. No signing secret is reproduced in this documentation.
 
 ## Concepts practiced
 
-- **Java:** classes, objects, constructors, constructor overloading, records, enums, interfaces, and `BigDecimal`.
-- **Spring:** dependency injection, beans, REST controllers, service layers, and `ResponseEntity`.
-- **Persistence:** repository pattern, Spring Data JPA, Hibernate, entity relationships, `@ManyToOne`, `@JoinColumn`, lazy loading, database constraints, and derived JPA queries.
-- **API design:** DTOs, Bean Validation, custom exceptions, and `@RestControllerAdvice`.
-- **Consistency:** `@Transactional` and optimistic locking.
+- Java classes, constructors, records, enums, interfaces, and `BigDecimal`.
+- Dependency injection, REST controllers, service layers, and response entities.
+- JPA relationships, lazy loading, repository queries, DTO mapping, and pagination.
+- Bean Validation, custom exceptions, transactions, and optimistic locking.
+- Authentication providers, BCrypt, JWT claims, role mapping, and ownership authorization.

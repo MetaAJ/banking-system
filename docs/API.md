@@ -1,33 +1,76 @@
 # API Reference
 
-Base URL for local development: `http://localhost:8080`.
+Local base URL: `http://localhost:8080`. Send JSON bodies with `Content-Type: application/json`.
 
-Use `Content-Type: application/json` for JSON request bodies. In the routes below, `accountId` refers to the internal database ID. Transfers identify accounts by their generated account numbers.
+## Authentication
 
-## Endpoints
+Only `/api/auth/**` is explicitly public. Other routes require a bearer token:
 
-| Method | Endpoint | Purpose |
+```http
+Authorization: Bearer <token>
+```
+
+### Signup
+
+`POST /api/auth/signup`
+
+```json
+{
+  "name": "Alex Morgan",
+  "email": "alex@example.com",
+  "phone": "+919876543210",
+  "password": "ExamplePass123!"
+}
+```
+
+Signup creates a customer and a linked login account with the `CUSTOMER` role in one database transaction. Passwords are stored as BCrypt hashes. The current controller returns an empty **200 OK** response; signup does not return a token.
+
+Validation: name 2–50 characters; valid email up to 50 characters; international phone matching `^\+[1-9]\d{7,14}$`; password 6–20 characters. All fields are required and nonblank.
+
+### Login
+
+`POST /api/auth/login`
+
+```json
+{
+  "email": "alex@example.com",
+  "password": "ExamplePass123!"
+}
+```
+
+Successful login returns **200 OK** with the raw JWT string, not a JSON token object. Email must be valid and nonblank; password must be nonblank. Tokens contain the email subject, a role claim, issue time, and expiration time. Configured token lifetime is one hour.
+
+No public endpoint creates an administrator. Admin routes require an existing user with the `ADMIN` role.
+
+## Endpoints and current access rules
+
+“Authenticated” means the security filter requires a token; additional ownership checks are listed separately. Admin users do not automatically bypass service ownership checks or satisfy routes restricted to `CUSTOMER`.
+
+| Method | Route | Current access / behavior |
 | --- | --- | --- |
-| GET | `/status` | Basic application status message |
-| POST | `/api/customers` | Create a customer |
-| GET | `/api/customers` | Retrieve customers |
-| GET | `/api/customers/{id}` | Retrieve a customer |
-| PUT | `/api/customers/{id}` | Update customer details |
-| PATCH | `/api/customers/{id}` | Update supplied customer fields |
-| DELETE | `/api/customers/{id}` | Delete a customer |
-| POST | `/api/accounts` | Create an account |
-| GET | `/api/accounts?customerId={customerId}` | Retrieve a customer's accounts |
-| GET | `/api/accounts/{accountId}` | Retrieve an account |
-| POST | `/api/accounts/{accountId}/deposit` | Deposit money |
-| POST | `/api/accounts/{accountId}/withdraw` | Withdraw money |
-| POST | `/api/accounts/transfer` | Transfer money between accounts |
-| GET | `/api/transactions/account/{accountId}` | Retrieve account transaction history |
+| GET | `/status` | Authenticated; status text |
+| POST | `/api/auth/signup` | Public; creates customer login |
+| POST | `/api/auth/login` | Public; returns token |
+| POST | `/api/customers` | Authenticated; creates customer entity only |
+| GET | `/api/customers` | `ADMIN` |
+| GET | `/api/customers/{id}` | Authenticated; ID must match caller's customer |
+| PUT | `/api/customers/{id}` | Authenticated; ownership check not implemented |
+| PATCH | `/api/customers/{id}` | Authenticated; ownership check not implemented |
+| DELETE | `/api/customers/{id}` | Authenticated; ownership check not implemented |
+| POST | `/api/accounts` | `CUSTOMER`; creates account for caller |
+| POST | `/api/admin/accounts` | `ADMIN`; creates account for requested customer |
+| GET | `/api/accounts?customerId={customerId}` | Authenticated; customer ID must match caller |
+| GET | `/api/accounts/{accountNumber}` | Authenticated; account must belong to caller |
+| POST | `/api/accounts/{accountNumber}/deposit` | `CUSTOMER`; account must belong to caller |
+| POST | `/api/accounts/{accountNumber}/withdraw` | `CUSTOMER`; account must belong to caller |
+| POST | `/api/accounts/transfer` | `CUSTOMER`; source must belong to caller |
+| GET | `/api/transactions/account/{accountId}` | Authenticated; ownership check not implemented |
 
-## Customer requests
+Account read/deposit/withdrawal routes now use **account numbers**, not internal IDs. Transaction history continues to use the internal account ID.
 
-### Create a customer
+## Customers
 
-`POST /api/customers` returns **201 Created** with the customer entity.
+`POST /api/customers` and `PUT /api/customers/{id}` accept:
 
 ```json
 {
@@ -37,58 +80,45 @@ Use `Content-Type: application/json` for JSON request bodies. In the routes belo
 }
 ```
 
-Name is required and must contain 2–50 characters. Email is required, must be valid, and has a maximum length of 50 characters. Phone is required and must match `^\+[1-9]\d{7,14}$` (international format with a leading `+`). Omit the generated `id` when creating a customer.
+These fields follow the customer name, email, and phone constraints described for signup. POST returns **201 Created**; PUT returns **200 OK**. Direct customer creation does not create login credentials; use signup for customer onboarding.
 
-### Update a customer
+PATCH accepts any subset of these fields, updates only non-null values, and returns **200 OK**. Request-level validation is not configured for PATCH. Reads return **200 OK**, and successful deletion returns **204 No Content**. Responses expose the customer entity fields `id`, `name`, `email`, and `phone`; list responses are arrays.
 
-`PUT /api/customers/{id}` accepts the same fields as creation and returns **200 OK**. `PATCH /api/customers/{id}` accepts a subset:
-
-```json
-{
-  "name": "Alex Taylor"
-}
-```
-
-PATCH updates non-null fields and returns **200 OK**. Missing or null fields are left unchanged. The current PATCH endpoint does not apply request-level Bean Validation.
-
-Customer reads and updates return `id`, `name`, `email`, and `phone`. The customer list returns an array. Successful deletion returns **204 No Content**.
+Changing a customer's email does not change the separate user login email. Deleting a customer with related records can encounter database constraints; there is no dedicated linked-record deletion policy or custom constraint-error handler.
 
 ## Create an account
 
-`POST /api/accounts` returns **201 Created**. Both fields are required, and `customerId` must identify an existing customer.
+Customer request: `POST /api/accounts`
 
 ```json
 {
-  "customerId": 1,
   "accountType": "SAVINGS"
 }
 ```
 
-Supported types are `SAVINGS` and `CURRENT`. New accounts start with a zero balance and `ACTIVE` status.
+The owner is resolved from the authenticated user's email. Do not include a `customerId` in this request.
 
-Account responses contain `id`, `accountNumber`, `accountType`, `balance`, `status`, and `customerId`. Account reads, deposits, and withdrawals return **200 OK**; the customer-account listing returns an array.
-
-## Deposit
-
-```http
-POST /api/accounts/{accountId}/deposit
-Content-Type: application/json
-```
+Admin request: `POST /api/admin/accounts`
 
 ```json
 {
-  "amount": 1000.00
+  "customerId": 1,
+  "accountType": "CURRENT"
 }
 ```
 
-The application finds the account, validates the request, updates the balance, and creates a transaction record. The balance update and transaction record are committed atomically.
+Both return **201 Created** with an `AccountResponse`. Account type is required and accepts `SAVINGS` or `CURRENT`; the admin request also requires an existing customer ID. New accounts have zero balance and `ACTIVE` status.
 
-## Withdrawal
+Account responses contain `id`, `accountNumber`, `accountType`, `balance`, `status`, and `customerId`. Account reads return **200 OK**, and customer-account listings return arrays. An authorized customer with no accounts receives an empty array; a different requested customer ID is rejected.
+
+## Deposit and withdrawal
 
 ```http
-POST /api/accounts/{accountId}/withdraw
-Content-Type: application/json
+POST /api/accounts/{accountNumber}/deposit
+POST /api/accounts/{accountNumber}/withdraw
 ```
+
+Both accept:
 
 ```json
 {
@@ -96,60 +126,60 @@ Content-Type: application/json
 }
 ```
 
-The application finds the account, validates the request, checks the available balance, deducts the amount, and creates a transaction record. Insufficient funds trigger an exception handled by the global exception handler.
+The amount is required and must be at least `0.01`. Both operations check ownership and reject `BLOCKED` or `CLOSED` accounts. Withdrawal also checks available funds. A successful operation records a transaction and returns **200 OK** with the updated `AccountResponse`.
 
 ## Transfer
 
-```http
-POST /api/accounts/transfer
-Content-Type: application/json
-```
+`POST /api/accounts/transfer`
 
 ```json
 {
-  "fromAccountNumber": "ACC123456789",
-  "toAccountNumber": "ACC987654321",
+  "fromAccountNumber": "ACC1234567890",
+  "toAccountNumber": "ACC9876543210",
   "amount": 300.00
 }
 ```
 
-Replace the illustrative account numbers with existing account numbers. The application resolves both accounts, rejects a transfer to the same account, checks available funds, debits the source, credits the destination, and creates a transaction record within one database transaction.
+Replace the example account numbers with actual values. The source must belong to the caller; the destination can belong to another customer. Accounts must be different, neither may be blocked or closed, and the source must have sufficient funds. Debit, credit, and transaction recording run within one database transaction.
+
+Success returns **200 OK** with `fromAccountNumber`, `toAccountNumber`, `amount`, and `fromAccountBalance`.
 
 ## Transaction history
 
 ```http
-GET /api/transactions/account/{accountId}
+GET /api/transactions/account/1?page=0&size=10
+GET /api/transactions/account/1?transactionType=TRANSFER&page=0&size=10
 ```
 
-Transactions are returned newest first using `TransactionResponse` DTOs. The response is an array with these fields: `transactionReference`, `transactionType`, `amount`, `fromAccountNumber`, `toAccountNumber`, `transactionStatus`, and `createdAt`. The internal transaction ID is not exposed. Deposits have a null source account number; withdrawals have a null destination account number.
+`page` is zero-based and `size` controls page size through Spring's `Pageable` binding. Optional `transactionType` accepts `DEPOSIT`, `WITHDRAWAL`, or `TRANSFER`. Repository queries explicitly order by `createdAt DESC`.
 
-Supported transaction types are `DEPOSIT`, `WITHDRAWAL`, and `TRANSFER`. The currently supported transaction status is `SUCCESS`.
+The endpoint returns **200 OK** with a Spring `Page<TransactionResponse>` rather than a plain array. Transaction items are in `content`; the page also carries pagination metadata. Exact serialized page metadata is framework-managed rather than a custom response contract.
 
-## Response and lookup behavior
+Each item contains:
 
-- Successful transfers return **200 OK** with `fromAccountNumber`, `toAccountNumber`, `amount`, and `fromAccountBalance`.
-- Transaction history returns **200 OK**. The lookup does not check account existence separately, so an unknown account ID returns an empty array.
-- The customer-account lookup similarly returns an empty array when no accounts match, including for an unknown customer ID.
-- `GET /status` returns **200 OK** with `Banking API is running!`.
+- `transactionReference`
+- `transactionType`
+- `amount`
+- `fromAccountNumber` (null for deposits)
+- `toAccountNumber` (null for withdrawals)
+- `transactionStatus` (currently `SUCCESS`)
+- `createdAt`
 
-## Validation and errors
+The internal transaction ID is not exposed. There is no separate account-existence check; an unmatched account ID yields an empty page. Ownership enforcement is not implemented for this endpoint.
 
-Jakarta Bean Validation checks request data. Custom exceptions cover duplicate or missing customers, missing accounts, insufficient funds, and invalid transfers. `GlobalExceptionHandler` centralizes HTTP error handling.
+## Errors and validation limits
 
-Optimistic locking failures return **HTTP 409 Conflict**.
-
-| Condition handled by the application | HTTP status | Response body |
+| Handled condition | Status | Body |
 | --- | --- | --- |
-| `CustomerAlreadyExistsException` | `409 Conflict` | Message string |
-| `CustomerNotFoundException` | `404 Not Found` | Message string |
-| `AccountNotFoundException` | `404 Not Found` | Message string |
-| `InsufficientFundsException` | `409 Conflict` | Message string |
-| `InvalidTransferException` | `400 Bad Request` | Message string |
+| Explicit duplicate-customer exception | `409 Conflict` | Message string |
+| Missing customer/user or account exception | `404 Not Found` | Message string |
+| Insufficient funds | `409 Conflict` | Message string |
+| Blocked or closed account | `409 Conflict` | Message string |
 | Optimistic locking failure | `409 Conflict` | Message string |
-| Request Bean Validation failure | `400 Bad Request` | JSON object mapping fields to error messages |
+| Same-account transfer | `400 Bad Request` | Message string |
+| Request Bean Validation failure | `400 Bad Request` | Field-to-message JSON object |
+| Service ownership rejection | `403 Forbidden` | Message string |
 
-Deposit, withdrawal, and transfer amounts are required and must be at least `0.01`. There is currently no request constraint limiting decimal places. Transfer account-number strings do not currently have nonblank constraints.
+JWT authentication and endpoint-role failures are handled by Spring Security, separately from these domain handlers. No custom login-failure response contract is defined in the global exception handler.
 
-The explicit duplicate-email exception is raised during customer creation. PUT and PATCH do not perform the same duplicate-email lookup, and database constraint failures do not have a dedicated handler. Do not assume every duplicate-email failure returns the documented custom `409` response.
-
-Financial operations currently do not check whether an account is `BLOCKED` or `CLOSED`. Authentication and authorization are planned.
+Transfer account-number strings have no nonblank constraints. Monetary requests have no decimal-place limit. Customer updates lack explicit duplicate-email checks, and database constraint failures have no dedicated handler. The custom duplicate-customer `409` contract therefore does not cover every possible uniqueness failure.

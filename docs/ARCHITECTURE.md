@@ -1,153 +1,102 @@
 # Architecture
 
-## Layered design
+## Application layers
 
 ```mermaid
 flowchart TD
-    Client[API client] --> Controller[Controller layer]
-    Controller --> Service[Service layer]
-    Service --> Repository[Repository layer]
-    Repository --> Database[(H2 database)]
+    Client[API client] --> Security[Spring Security filter chain]
+    Security --> Controller[REST controllers]
+    Controller --> Service[Application services]
+    Service --> Repository[Spring Data JPA repositories]
+    Repository --> DB[(H2 database)]
 ```
 
 | Layer | Responsibility | Components |
 | --- | --- | --- |
-| Controller | Receive HTTP requests, validate input, handle parameters, delegate to services, and return responses | `CustomerController`, `AccountController`, `TransactionController` |
-| Service | Customer operations, account creation, balance checks, deposits, withdrawals, transfers, transaction creation, and entity-to-DTO conversion | `CustomerService`, `AccountService`, `TransactionService` |
-| Repository | Database access through Spring Data JPA | `CustomerRepository`, `AccountRepository`, `TransactionRepository` |
-| Entity | Represent the database model | `Customer`, `Account`, `Transaction` |
-| DTO | Define request and response contracts separately from persistence entities | Request and response records/classes |
-| Exception | Represent domain failures and centralize HTTP error handling | Custom exceptions and `GlobalExceptionHandler` |
+| Configuration | Password encoder, authentication provider, security rules, JWT encoder/decoder and authority mapping | `SecurityConfig` |
+| Controller | Route requests, validate DTOs, return HTTP responses | `AuthController`, `CustomerController`, `AccountController`, `AdminAccountController`, `TransactionController`, `BankController` |
+| Service | Authentication, identity lookup, customer/account operations, ownership checks, financial rules, response mapping | `AuthService`, `JwtService`, `CustomUserDetailsService`, `CustomerService`, `AccountService`, `TransactionService` |
+| Repository | Entity lookups, saves, uniqueness lookups, paginated transaction queries | Customer, account, transaction, and user-account repositories |
+| Entity | Persistence model and relationships | `Customer`, `UserAccount`, `Account`, `Transaction` |
+| DTO | API request/response records | Authentication, account, transfer, transaction, and customer PATCH records |
+| Exception | Domain failures and centralized HTTP mappings | Custom runtime exceptions and `GlobalExceptionHandler` |
+
+## Authentication and authorization
+
+Signup atomically creates a customer and linked `UserAccount`, hashing the password with BCrypt and assigning `CUSTOMER`.
+
+Login authenticates email/password through `AuthenticationManager`, `DaoAuthenticationProvider`, and `CustomUserDetailsService`. `JwtService` issues a token with the email as subject and a role claim such as `ROLE_CUSTOMER` or `ROLE_ADMIN`. The expiration property is interpreted in milliseconds.
+
+The resource-server configuration validates bearer JWTs using a symmetric secret. A JWT authentication converter maps the role claim directly to a granted authority. The security chain disables CSRF and requires authentication except for `/api/auth/**`. It does not explicitly configure a stateless session-creation policy.
+
+Endpoint role rules and service ownership checks serve different purposes. Account services resolve the authenticated email to `UserAccount` and compare linked customer IDs. The admin creation route uses a separately supplied customer ID; other ownership checks have no admin bypass.
+
+Current ownership checks cover customer-by-ID reads, customer-account lists, individual account reads, deposits, withdrawals, and transfer sources. Customer updates/deletion and transaction-history reads do not yet perform ownership checks. See the [access table](API.md#endpoints-and-current-access-rules).
 
 ## Domain model
 
-### Customer
-
-A customer contains an ID, name, email, and phone number. One customer can own multiple accounts.
-
 ```text
-Customer 1 ─────────── * Account
+UserAccount ── one-to-one ── Customer ── one-to-many ── Account
+                                                        │
+                              source or destination in many Transactions
 ```
 
-### Account
+`UserAccount` contains an internal ID, unique non-null login email, password hash, role, and required customer link. Direct customer creation can produce a customer without login credentials.
 
-An account contains:
+`Customer` contains ID, name, unique email, and international-format phone number. Its email is stored separately from the user login email.
 
-- Internal database ID.
-- Automatically generated unique account number, for example `ACC8F4A21C9D0`.
-- Account type: `SAVINGS` or `CURRENT`.
-- Balance.
-- Account status: `ACTIVE`, `BLOCKED`, or `CLOSED`. Creation sets `ACTIVE`; deposits, withdrawals, and transfers currently do not check status.
-- Associated customer.
-- Optimistic locking version.
+`Account` contains ID, unique non-null account number, account type, balance, status, customer relation, and an optimistic locking `@Version`. Types are `SAVINGS` and `CURRENT`; statuses are `ACTIVE`, `BLOCKED`, and `CLOSED`.
 
-### Transaction
+`Transaction` contains ID, unique non-null transaction reference, type, amount, optional source/destination relations, status, and creation timestamp. Supported types are `DEPOSIT`, `WITHDRAWAL`, and `TRANSFER`; the only current status is `SUCCESS`.
 
-Every successful financial operation creates a transaction record containing:
-
-- Internal transaction ID and a separate transaction reference.
-- Type: `DEPOSIT`, `WITHDRAWAL`, or `TRANSFER`.
-- Amount.
-- Source account (`fromAccount`) and destination account (`toAccount`).
-- Status, currently `SUCCESS`.
-- Creation timestamp.
-
-An account can participate as the source or destination of many transactions:
-
-| Operation | `fromAccount` | `toAccount` |
+| Operation | Source account | Destination account |
 | --- | --- | --- |
-| Deposit | `null` | Receiving account |
-| Withdrawal | Withdrawing account | `null` |
+| Deposit | null | Receiving account |
+| Withdrawal | Withdrawing account | null |
 | Transfer | Source account | Destination account |
 
-For deposits and withdrawals, the external source or destination is represented by the absent account reference, not by a separate account entity.
+External deposit/withdrawal counterparties are not separate entities. Account numbers and transaction references use `ACC` and `TXN` prefixes followed by ten uppercase hexadecimal characters derived from a UUID.
 
-The transaction entity has an internal ID, but `TransactionResponse` exposes the transaction reference instead of that ID. Both account numbers and transaction references have unique, non-null column mappings.
-
-## Transfer request flow
+## Transfer flow
 
 ```mermaid
 flowchart TD
-    A[POST /api/accounts/transfer] --> B[Validate request DTO]
-    B --> C[Resolve source and destination accounts]
-    C --> D[Reject same-account transfer and check funds]
-    D --> E[Debit source account]
-    E --> F[Credit destination account]
-    F --> G[Create transaction record]
+    A[JWT and CUSTOMER role check] --> B[Validate TransferRequest]
+    B --> C[Resolve caller and verify source ownership]
+    C --> D[Find destination and reject same-account transfer]
+    D --> E[Check both account statuses and source funds]
+    E --> F[Debit source and credit destination]
+    F --> G[Save SUCCESS transaction record]
     G --> H[Commit database transaction]
-    H --> I[Return response DTO]
+    H --> I[Return TransferResponse]
 ```
 
-The balance updates and transaction record belong to one database transaction. Failures subject to the transaction's rollback rules prevent partial changes from being committed.
+`AccountService` uses `jakarta.transaction.Transactional` for financial operations. Balance changes are persisted through managed-entity dirty checking, while the transaction record is explicitly saved. Account version checks detect conflicting concurrent updates; the exception handler maps supported optimistic locking failures to HTTP 409.
 
-## DTOs
+## API model boundaries
 
-- `UpdateCustomerRequest`
-- `CreateAccountRequest`
-- `AccountResponse`
-- `DepositRequest`
-- `WithdrawRequest`
-- `TransferRequest`
-- `TransferResponse`
-- `TransactionResponse`
+Account responses use `AccountResponse`; transfers use `TransferResponse`; history maps a repository page to `Page<TransactionResponse>`. Customer APIs still return entities, with POST/PUT accepting `Customer` and PATCH accepting `UpdateCustomerRequest`. Login returns a raw string and signup returns no body.
 
-Account responses use `AccountResponse`, and transaction history uses `TransactionResponse`. Customer endpoints currently return the `Customer` entity; customer POST and PUT also accept that entity directly. Customer PATCH accepts `UpdateCustomerRequest`. Full customer DTO separation is planned.
-
-## Exceptions
-
-- `CustomerAlreadyExistsException`
-- `CustomerNotFoundException`
-- `AccountNotFoundException`
-- `InsufficientFundsException`
-- `InvalidTransferException`
-
-`GlobalExceptionHandler` uses `@RestControllerAdvice` to translate failures into HTTP responses, including HTTP 409 for optimistic locking conflicts.
+Request records: `SignupRequest`, `LoginRequest`, `CreateAccountRequest`, `AdminCreateAccountRequest`, `DepositRequest`, `WithdrawRequest`, `TransferRequest`, and `UpdateCustomerRequest`.
 
 ## Project structure
 
 ```text
 src/
-└── main/
-    └── java/
-        └── com/
-            └── bankingsystem/
-                └── bank/
-                    ├── BankApplication.java
-                    ├── controller/
-                    │   ├── BankController.java
-                    │   ├── CustomerController.java
-                    │   ├── AccountController.java
-                    │   └── TransactionController.java
-                    ├── service/
-                    │   ├── CustomerService.java
-                    │   ├── AccountService.java
-                    │   └── TransactionService.java
-                    ├── repository/
-                    │   ├── CustomerRepository.java
-                    │   ├── AccountRepository.java
-                    │   └── TransactionRepository.java
-                    ├── entity/
-                    │   ├── Customer.java
-                    │   ├── Account.java
-                    │   ├── AccountType.java
-                    │   ├── AccountStatus.java
-                    │   ├── Transaction.java
-                    │   ├── TransactionType.java
-                    │   └── TransactionStatus.java
-                    ├── dto/
-                    │   ├── UpdateCustomerRequest.java
-                    │   ├── CreateAccountRequest.java
-                    │   ├── AccountResponse.java
-                    │   ├── DepositRequest.java
-                    │   ├── WithdrawRequest.java
-                    │   ├── TransferRequest.java
-                    │   ├── TransferResponse.java
-                    │   └── TransactionResponse.java
-                    └── exception/
-                        ├── CustomerAlreadyExistsException.java
-                        ├── CustomerNotFoundException.java
-                        ├── AccountNotFoundException.java
-                        ├── InsufficientFundsException.java
-                        ├── InvalidTransferException.java
-                        └── GlobalExceptionHandler.java
+├── main/
+│   ├── java/com/bankingsystem/bank/
+│   │   ├── BankApplication.java
+│   │   ├── config/          Security configuration
+│   │   ├── controller/      Authentication, customers, accounts, admin, history, status
+│   │   ├── service/         Authentication and banking business logic
+│   │   ├── repository/      Customer, Account, Transaction, UserAccount repositories
+│   │   ├── entity/          Domain entities and enums
+│   │   ├── dto/             Request and response records
+│   │   └── exception/       Domain exceptions and global handler
+│   └── resources/application.properties
+└── test/java/com/bankingsystem/bank/
+    ├── BankApplicationTests.java
+    └── service/AccountServiceTest.java
 ```
+
+H2 is in memory, and Hibernate creates the schema at startup. There are no database migrations or persistent PostgreSQL configuration in the reviewed implementation.
